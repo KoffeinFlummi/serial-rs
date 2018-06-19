@@ -29,7 +29,14 @@ use std::os::unix::prelude::RawFd;
 #[allow(non_camel_case_types)]
 pub type termios = libc::termios2;
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum Speed {
+    Standard(libc::speed_t),
+    Custom(libc::speed_t),
+}
+
 const IBSHIFT: usize = 16;
+const BOTHER: libc::speed_t = 0x1000;
 
 #[cfg(not(any(target_env = "musl",
               target_env = "android")))]
@@ -111,13 +118,18 @@ pub fn flush(fd: RawFd) -> core::Result<()> {
 
 // See tty_termios_baud_rate() and tty_termios_input_baud_rate() in drivers/tty/tty_baudrate.c in
 // the Linux kernel source.
-pub fn get_speed(termios: &termios) -> (libc::speed_t, libc::speed_t) {
+pub fn get_speed(termios: &termios) -> (Speed, Speed) {
     use libc::{CBAUD, B0};
 
-    let ospeed = termios.c_cflag & CBAUD;
+    let ospeed = match termios.c_cflag & CBAUD {
+        BOTHER => Speed::Custom(termios.c_ospeed),
+        speed => Speed::Standard(speed),
+    };
+
     let ispeed = match termios.c_cflag >> IBSHIFT & CBAUD {
         B0 => ospeed,
-        n => n,
+        BOTHER => Speed::Custom(termios.c_ispeed),
+        speed => Speed::Standard(speed),
     };
 
     (ospeed, ispeed)
@@ -125,11 +137,21 @@ pub fn get_speed(termios: &termios) -> (libc::speed_t, libc::speed_t) {
 
 // See tty_termios_baud_rate() and tty_termios_input_baud_rate() in drivers/tty/tty_baudrate.c in
 // the Linux kernel source.
-pub fn set_speed(termios: &mut termios, baud: libc::speed_t) -> core::Result<()> {
+pub fn set_speed(termios: &mut termios, speed: Speed) -> core::Result<()> {
     use libc::{CBAUD, B0};
 
     termios.c_cflag &= !(CBAUD | CBAUD << IBSHIFT);
-    termios.c_cflag |= baud | B0 << IBSHIFT;
+    termios.c_cflag |= B0 << IBSHIFT;
+
+    match speed {
+        Speed::Standard(baud) => {
+            termios.c_cflag |= baud;
+        },
+        Speed::Custom(baud) => {
+            termios.c_cflag |= BOTHER;
+            termios.c_ospeed = baud;
+        },
+    }
 
     Ok(())
 }

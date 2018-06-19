@@ -29,6 +29,12 @@ use std::os::unix::prelude::RawFd;
 #[allow(non_camel_case_types)]
 pub type termios = libc::termios;
 
+#[derive(PartialEq, Eq)]
+pub enum Speed {
+    Standard(libc::speed_t),
+    Custom(libc::speed_t),
+}
+
 pub fn read(fd: RawFd) -> core::Result<termios> {
     let mut termios: termios = unsafe { mem::uninitialized() };
 
@@ -65,19 +71,26 @@ pub fn flush(fd: RawFd) -> core::Result<()> {
     Ok(())
 }
 
-pub fn get_speed(termios: &termios) -> (libc::speed_t, libc::speed_t) {
+pub fn get_speed(termios: &termios) -> (Speed, Speed) {
     unsafe {
-        let ospeed = libc::cfgetospeed(termios);
-        let ispeed = libc::cfgetispeed(termios);
+        let ospeed = Speed::Standard(libc::cfgetospeed(termios));
+        let ispeed = Speed::Standard(libc::cfgetispeed(termios));
 
         (ospeed, ispeed)
     }
 }
 
-pub fn set_speed(termios: &mut termios, baud: libc::speed_t) -> core::Result<()> {
-    unsafe {
-        if libc::cfsetspeed(termios, baud) < 0 {
-            return Err(super::error::last_os_error());
+pub fn set_speed(termios: &mut termios, speed: Speed) -> core::Result<()> {
+    use libc::EINVAL;
+
+    match speed {
+        Speed::Standard(baud) => unsafe {
+            if libc::cfsetspeed(termios, baud) < 0 {
+                return Err(super::error::last_os_error());
+            }
+        },
+        Speed::Custom(_) => {
+            return Err(super::error::from_raw_os_error(EINVAL));
         }
     }
 
