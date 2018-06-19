@@ -28,4 +28,11 @@ pub use tty::*;
 
 mod error;
 mod poll;
+
+#[cfg(not(target_os = "linux"))]
+mod termios;
+
+#[cfg(target_os = "linux")]
+mod termios2;
+
 mod tty;
