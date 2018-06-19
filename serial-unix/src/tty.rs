@@ -36,16 +36,6 @@ use libc::{c_int, c_void, size_t};
 use core::{SerialDevice, SerialPortSettings};
 
 
-#[cfg(target_os = "linux")]
-const O_NOCTTY: c_int = 0x00000100;
-
-#[cfg(target_os = "macos")]
-const O_NOCTTY: c_int = 0x00020000;
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-const O_NOCTTY: c_int = 0;
-
-
 /// A TTY-based serial port implementation.
 ///
 /// The port will be closed when the value is dropped.
@@ -72,7 +62,7 @@ impl TTYPort {
     /// * `InvalidInput` if `port` is not a valid device name.
     /// * `Io` for any other error while opening or initializing the device.
     pub fn open(path: &Path) -> core::Result<Self> {
-        use libc::{O_RDWR, O_NONBLOCK, F_SETFL, EINVAL};
+        use libc::{O_RDWR, O_NOCTTY, O_NONBLOCK, F_SETFL, EINVAL};
 
         let cstr = match CString::new(path.as_os_str().as_bytes()) {
             Ok(s) => s,

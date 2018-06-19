@@ -13,6 +13,6 @@ categories = ["hardware-support", "os", "os::unix-apis"]
 
 [dependencies]
 serial-core = { version = "0.4", path = "../serial-core" }
-libc = "0.2.1"
+libc = "0.2.19"
 termios = "0.2.2"
 ioctl-rs = "0.1.5"
