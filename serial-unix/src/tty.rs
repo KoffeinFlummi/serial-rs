@@ -36,6 +36,60 @@ use libc::{c_int, c_void, size_t};
 use core::{SerialDevice, SerialPortSettings};
 
 
+#[cfg(target_os = "linux")]
+const IBSHIFT: usize = 16;
+
+#[cfg(all(target_os = "linux",
+          not(any(target_env = "musl",
+                  target_env = "android"))))]
+#[allow(non_camel_case_types)]
+type ioctl_request = libc::c_ulong;
+
+#[cfg(all(target_os = "linux",
+          any(target_env = "musl",
+              target_env = "android")))]
+#[allow(non_camel_case_types)]
+type ioctl_request = libc::c_int;
+
+#[cfg(all(target_os = "linux",
+          any(target_arch = "x86",
+              target_arch = "x86_64",
+              target_arch = "arm",
+              target_arch = "aarch64",
+              target_arch = "s390x")))]
+// Suppress warning on targets with libc that use c_int for ioctl request type. Binary
+// representation is unaffected, so ioctl() will be interpreted correctly.
+#[allow(overflowing_literals)]
+const TCGETS2: ioctl_request = 0x802C542A;
+
+#[cfg(all(target_os = "linux",
+          any(target_arch = "x86",
+              target_arch = "x86_64",
+              target_arch = "arm",
+              target_arch = "aarch64",
+              target_arch = "s390x")))]
+const TCSETS2: ioctl_request = 0x402C542B;
+
+#[cfg(all(target_os = "linux",
+          any(target_arch = "mips",
+              target_arch = "mips64",
+              target_arch = "powerpc",
+              target_arch = "powerpc64",
+              target_arch = "sparc64")))]
+const TCGETS2: ioctl_request = 0x402C542A;
+
+#[cfg(all(target_os = "linux",
+          any(target_arch = "mips",
+              target_arch = "mips64",
+              target_arch = "powerpc",
+              target_arch = "powerpc64",
+              target_arch = "sparc64")))]
+// Suppress warning on targets with libc that use c_int for ioctl request type. Binary
+// representation is unaffected, so ioctl() will be interpreted correctly.
+#[allow(overflowing_literals)]
+const TCSETS2: ioctl_request = 0x802C542B;
+
+
 /// A TTY-based serial port implementation.
 ///
 /// The port will be closed when the value is dropped.
@@ -204,10 +258,22 @@ impl SerialDevice for TTYPort {
         use libc::{INLCR, IGNCR, ICRNL, IGNBRK}; // iflags
         use libc::{VMIN, VTIME}; // c_cc indexes
 
-        let mut termios = unsafe { mem::uninitialized() };
+        #[cfg(not(target_os = "linux"))]
+        let mut termios: libc::termios = unsafe { mem::uninitialized() };
 
+        #[cfg(target_os = "linux")]
+        let mut termios: libc::termios2 = unsafe { mem::uninitialized() };
+
+        #[cfg(not(target_os = "linux"))]
         unsafe {
             if libc::tcgetattr(self.fd, &mut termios) < 0 {
+                return Err(super::error::last_os_error());
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        unsafe {
+            if libc::ioctl(self.fd, TCGETS2, &mut termios) < 0 {
                 return Err(super::error::last_os_error());
             }
         }
@@ -225,14 +291,26 @@ impl SerialDevice for TTYPort {
     }
 
     fn write_settings(&mut self, settings: &TTYSettings) -> core::Result<()> {
-        use libc::{TCSANOW, TCIOFLUSH};
+        #[cfg(not(target_os = "linux"))]
+        use libc::{TCSANOW};
+        use libc::{TCIOFLUSH};
 
         // write settings to TTY
+        #[cfg(not(target_os = "linux"))]
         unsafe {
             if libc::tcsetattr(self.fd, TCSANOW, &settings.termios) < 0 {
                 return Err(super::error::last_os_error());
             }
+        }
 
+        #[cfg(target_os = "linux")]
+        unsafe {
+            if libc::ioctl(self.fd, TCSETS2, &settings.termios) < 0 {
+                return Err(super::error::last_os_error());
+            }
+        }
+
+        unsafe {
             if libc::tcflush(self.fd, TCIOFLUSH) < 0 {
                 return Err(super::error::last_os_error());
             }
@@ -278,18 +356,30 @@ impl SerialDevice for TTYPort {
 /// Serial port settings for TTY devices.
 #[derive(Copy,Clone)]
 pub struct TTYSettings {
+    #[cfg(not(target_os = "linux"))]
     termios: libc::termios,
+    #[cfg(target_os = "linux")]
+    termios: libc::termios2,
 }
 
 impl TTYSettings {
+    #[cfg(not(target_os = "linux"))]
     fn new(termios: libc::termios) -> Self {
+        TTYSettings { termios: termios }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn new(termios: libc::termios2) -> Self {
         TTYSettings { termios: termios }
     }
 }
 
 impl fmt::Debug for TTYSettings {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        #[cfg(not(target_os = "linux"))]
         struct TermiosFormatter(libc::termios);
+        #[cfg(target_os = "linux")]
+        struct TermiosFormatter(libc::termios2);
 
         impl fmt::Debug for TermiosFormatter {
             fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -315,7 +405,7 @@ impl SerialPortSettings for TTYSettings {
         use libc::{B57600, B115200, B230400};
 
         #[cfg(target_os = "linux")]
-        use libc::{B460800, B500000, B576000, B921600, B1000000, B1152000, B1500000, B2000000, B2500000, B3000000, B3500000, B4000000};
+        use libc::{B0, B460800, B500000, B576000, B921600, B1000000, B1152000, B1500000, B2000000, B2500000, B3000000, B3500000, B4000000};
 
         #[cfg(target_os = "macos")]
         use libc::{B7200, B14400, B28800, B76800};
@@ -326,8 +416,27 @@ impl SerialPortSettings for TTYSettings {
         #[cfg(target_os = "openbsd")]
         use libc::{B7200, B14400, B28800, B76800};
 
-        let ospeed = unsafe { libc::cfgetospeed(&self.termios) };
-        let ispeed = unsafe { libc::cfgetispeed(&self.termios) };
+        #[cfg(target_os = "linux")]
+        use libc::CBAUD;
+
+        #[cfg(not(target_os = "linux"))]
+        let (ospeed, ispeed) = unsafe {
+            (
+                libc::cfgetospeed(&self.termios),
+                libc::cfgetispeed(&self.termios),
+            )
+        };
+
+        #[cfg(target_os = "linux")]
+        let (ospeed, ispeed) = {
+            let ospeed = self.termios.c_cflag & CBAUD;
+            let ispeed = self.termios.c_cflag >> IBSHIFT & CBAUD;
+
+            match ispeed {
+                B0 => (ospeed, ospeed),
+                _ => (ospeed, ispeed),
+            }
+        };
 
         if ospeed != ispeed {
             return None;
@@ -450,7 +559,7 @@ impl SerialPortSettings for TTYSettings {
         use libc::{B57600, B115200, B230400};
 
         #[cfg(target_os = "linux")]
-        use libc::{B460800, B500000, B576000, B921600, B1000000, B1152000, B1500000, B2000000, B2500000, B3000000, B3500000, B4000000};
+        use libc::{B0, B460800, B500000, B576000, B921600, B1000000, B1152000, B1500000, B2000000, B2500000, B3000000, B3500000, B4000000};
 
         #[cfg(target_os = "macos")]
         use libc::{B7200, B14400, B28800, B76800};
@@ -460,6 +569,9 @@ impl SerialPortSettings for TTYSettings {
 
         #[cfg(target_os = "openbsd")]
         use libc::{B7200, B14400, B28800, B76800};
+
+        #[cfg(target_os = "linux")]
+        use libc::CBAUD;
 
         let baud = match baud_rate {
             core::BaudOther(50)      => B50,
@@ -516,10 +628,17 @@ impl SerialPortSettings for TTYSettings {
             core::BaudOther(_) => return Err(super::error::from_raw_os_error(EINVAL)),
         };
 
+        #[cfg(not(target_os = "linux"))]
         unsafe {
             if libc::cfsetspeed(&mut self.termios, baud) < 0 {
                 return Err(super::error::last_os_error());
             }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            self.termios.c_cflag &= !(CBAUD | CBAUD << IBSHIFT);
+            self.termios.c_cflag |= baud | B0 << IBSHIFT;
         }
 
         Ok(())
