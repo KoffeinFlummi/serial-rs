@@ -21,7 +21,6 @@
 
 use core;
 use libc;
-use ioctl;
 
 use std::ffi::CString;
 use std::fmt;
@@ -63,7 +62,7 @@ impl TTYPort {
     /// * `InvalidInput` if `port` is not a valid device name.
     /// * `Io` for any other error while opening or initializing the device.
     pub fn open(path: &Path) -> core::Result<Self> {
-        use libc::{O_RDWR, O_NOCTTY, O_NONBLOCK, F_SETFL, EINVAL};
+        use libc::{O_RDWR, O_NOCTTY, O_NONBLOCK, TIOCEXCL, F_SETFL, EINVAL};
 
         let cstr = match CString::new(path.as_os_str().as_bytes()) {
             Ok(s) => s,
@@ -80,14 +79,16 @@ impl TTYPort {
             timeout: Duration::from_millis(100),
         };
 
-        // get exclusive access to device
-        if let Err(err) = ioctl::tiocexcl(port.fd) {
-            return Err(super::error::from_io_error(err));
-        }
+        unsafe {
+            // get exclusive access to device
+            if libc::ioctl(port.fd, TIOCEXCL) < 0 {
+                return Err(super::error::last_os_error());
+            }
 
-        // clear O_NONBLOCK flag
-        if unsafe { libc::fcntl(port.fd, F_SETFL, 0) } < 0 {
-            return Err(super::error::last_os_error());
+            // clear O_NONBLOCK flag
+            if libc::fcntl(port.fd, F_SETFL, 0) < 0 {
+                return Err(super::error::last_os_error());
+            }
         }
 
         // apply initial settings
@@ -98,33 +99,45 @@ impl TTYPort {
     }
 
     fn set_pin(&mut self, pin: c_int, level: bool) -> core::Result<()> {
-        let retval = if level {
-            ioctl::tiocmbis(self.fd, pin)
-        }
-        else {
-            ioctl::tiocmbic(self.fd, pin)
+        use libc::{TIOCMBIS, TIOCMBIC};
+
+        let retval = unsafe {
+            if level {
+                libc::ioctl(self.fd, TIOCMBIS, &pin)
+            }
+            else {
+                libc::ioctl(self.fd, TIOCMBIC, &pin)
+            }
         };
 
-        match retval {
-            Ok(()) => Ok(()),
-            Err(err) => Err(super::error::from_io_error(err)),
+        if retval < 0 {
+            return Err(super::error::last_os_error());
         }
+
+        Ok(())
     }
 
     fn read_pin(&mut self, pin: c_int) -> core::Result<bool> {
-        match ioctl::tiocmget(self.fd) {
-            Ok(pins) => Ok(pins & pin != 0),
-            Err(err) => Err(super::error::from_io_error(err)),
+        use libc::{TIOCMGET};
+
+        unsafe {
+            let mut pins: c_int = mem::uninitialized();
+
+            if libc::ioctl(self.fd, TIOCMGET, &mut pins) < 0 {
+                return Err(super::error::last_os_error());
+            }
+
+            Ok(pins & pin != 0)
         }
     }
 }
 
 impl Drop for TTYPort {
     fn drop(&mut self) {
-        #![allow(unused_must_use)]
-        ioctl::tiocnxcl(self.fd);
+        use libc::{TIOCNXCL};
 
         unsafe {
+            libc::ioctl(self.fd, TIOCNXCL);
             libc::close(self.fd);
         }
     }
@@ -238,27 +251,27 @@ impl SerialDevice for TTYPort {
     }
 
     fn set_rts(&mut self, level: bool) -> core::Result<()> {
-        self.set_pin(ioctl::TIOCM_RTS, level)
+        self.set_pin(libc::TIOCM_RTS, level)
     }
 
     fn set_dtr(&mut self, level: bool) -> core::Result<()> {
-        self.set_pin(ioctl::TIOCM_DTR, level)
+        self.set_pin(libc::TIOCM_DTR, level)
     }
 
     fn read_cts(&mut self) -> core::Result<bool> {
-        self.read_pin(ioctl::TIOCM_CTS)
+        self.read_pin(libc::TIOCM_CTS)
     }
 
     fn read_dsr(&mut self) -> core::Result<bool> {
-        self.read_pin(ioctl::TIOCM_DSR)
+        self.read_pin(libc::TIOCM_DSR)
     }
 
     fn read_ri(&mut self) -> core::Result<bool> {
-        self.read_pin(ioctl::TIOCM_RI)
+        self.read_pin(libc::TIOCM_RI)
     }
 
     fn read_cd(&mut self) -> core::Result<bool> {
-        self.read_pin(ioctl::TIOCM_CD)
+        self.read_pin(libc::TIOCM_CD)
     }
 }
 
