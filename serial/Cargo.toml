@@ -17,5 +17,5 @@ serial-core = { version = "=0.4.0", path = "../serial-core" }
 [target.'cfg(unix)'.dependencies]
 serial-unix = { version = "=0.4.0", path = "../serial-unix" }
 
-[target.'cfg(windows)'.dependencies]
-serial-windows = { version = "=0.4.0", path = "../serial-windows" }
+#[target.'cfg(windows)'.dependencies]
+#serial-windows = { version = "=0.4.0", path = "../serial-windows" }

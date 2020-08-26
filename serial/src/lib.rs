@@ -24,8 +24,8 @@ pub extern crate serial_core as core;
 #[cfg(unix)]
 pub extern crate serial_unix as unix;
 
-#[cfg(windows)]
-pub extern crate serial_windows as windows;
+//#[cfg(windows)]
+//pub extern crate serial_windows as windows;
 
 use std::ffi::OsStr;
 
